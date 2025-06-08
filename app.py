@@ -56,57 +56,44 @@ allowed_extensions = {"jpg", "jpeg", "png"}
 # Endpoint utama untuk prediksi gambar hama
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    # Validasi nama file
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Empty file name")
+    # Validasi Content-Type
+    if file.content_type not in ["image/jpeg", "image/png"]:
+        raise HTTPException(status_code=400, detail="Hanya JPG atau PNG yang didukung.")
 
-    # Validasi ekstensi file
-    ext = file.filename.split(".")[-1].lower()
-    if ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail="Format file tidak didukung. Gunakan JPG atau PNG.")
-
-    # Baca isi file dan cek ukuran
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Ukuran file terlalu besar. Maksimal 5MB.")
 
-    # Coba konversi ke gambar valid
+    # Konversi gambar
     try:
         img = Image.open(io.BytesIO(contents))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
     except UnidentifiedImageError:
         raise HTTPException(status_code=400, detail="File bukan gambar yang valid")
 
-    # Proses gambar: ubah ke RGB, ubah ukuran, normalisasi, dan bentuk array untuk prediksi
-    img = img.convert("RGB")
     img = img.resize((224, 224))
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
 
-    # Prediksi menggunakan model
     try:
         prediction = model.predict(img_array)
     except Exception:
         raise HTTPException(status_code=500, detail="Model gagal melakukan prediksi. Periksa format gambar.")
 
-    # Hitung kepercayaan (confidence) prediksi
     confidence = float(np.max(prediction))
     confidence_percent = round(confidence * 100, 2)
 
-    # Jika confidence terlalu rendah, anggap gambar tidak relevan
     if confidence < 0.93:
         raise HTTPException(
             status_code=400,
-            detail="Gambar yang diunggah tampaknya tidak menunjukkan keberadaan hama tanaman seperti serangga. Sistem tidak dapat melakukan identifikasi hama berdasarkan gambar ini."
+            detail="Gambar tampaknya tidak menunjukkan keberadaan hama. Coba ulangi dengan gambar lebih jelas."
         )
 
-    # Ambil indeks dan nama class dari prediksi
     class_index = int(np.argmax(prediction))
     class_name_id = class_labels[class_index]
-
-     # Ambil saran berdasarkan jenis hama yang dikenali
     suggestion = suggestions.get(class_name_id, "Belum ada saran yang tersedia untuk saat ini.")
 
-    # Kembalikan hasil prediksi dan saran dalam format JSON
     return {
         "data": {
             "prediction": class_name_id,
